@@ -72,7 +72,7 @@ function Show-InteractiveMenu {
             }
         }
         
-        Write-Host ("")
+        Write-Host ""
         Write-Host ("-"*45)
         Write-Host "  导航:       ↑ / ↓"
         Write-Host "  选择/取消:  空格键 (Spacebar)"
