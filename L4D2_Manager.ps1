@@ -1,5 +1,5 @@
 ﻿# =================================================================
-# L4D2 服务器与插件管理器 2100 (PowerShell 交互版)
+# L4D2 服务器与插件管理器 2110 (PowerShell 交互版)
 # 作者: Q1en
 # 功能: 安装/更新 SourceMod & MetaMod, 并管理插件。
 # =================================================================
@@ -22,7 +22,7 @@ $ScriptDir = $PSScriptRoot
 $InstallerDir = Join-Path -Path $ScriptDir -ChildPath "SourceMod_Installers"
 $PluginSourceDir = Join-Path -Path $ScriptDir -ChildPath "Available_Plugins"
 $ReceiptsDir = Join-Path -Path $ScriptDir -ChildPath "Installed_Receipts"
-$ScriptVersion = "2100 (交互版)"
+$ScriptVersion = "2110 (交互版)"
 $IsSourceModInstalled = $false
 
 # --- 初始化检查 ---
@@ -45,7 +45,7 @@ if (Test-Path -Path (Join-Path -Path $L4d2Dir -ChildPath "addons\sourcemod\bin\s
 }
 
 
-# --- 新增：交互式菜单核心函数 ---
+# --- 交互式菜单核心函数 ---
 function Show-InteractiveMenu {
     param(
         [Parameter(Mandatory=$true)] [System.Collections.IList]$Items,
@@ -72,7 +72,7 @@ function Show-InteractiveMenu {
             }
         }
         
-        Write-Host ""
+        Write-Host ("")
         Write-Host ("-"*45)
         Write-Host "  导航:       ↑ / ↓"
         Write-Host "  选择/取消:  空格键 (Spacebar)"
@@ -138,7 +138,6 @@ function Invoke-PluginUninstallation {
         foreach ($relativePath in $filesToMove) {
             $serverFile = Join-Path -Path $ServerRoot -ChildPath $relativePath
             
-            # 【BUG 修复】分两步构建目标路径，避免对 Join-Path 传递多个 -ChildPath 参数
             $pluginReclaimFolder = Join-Path -Path $PluginSourceDir -ChildPath $pluginName
             $destinationFile = Join-Path -Path $pluginReclaimFolder -ChildPath $relativePath
             
@@ -291,50 +290,6 @@ function Uninstall-L4D2Plugin {
     Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan
     Read-Host "按回车键返回主菜单..."
 }
-
-function Install-AllL4D2Plugins {
-    Clear-Host
-    Write-Host "==================== 安装所有可用插件 ===================="
-    $availablePlugins = @(Get-ChildItem -Path $PluginSourceDir -Directory | Where-Object { -not (Test-Path (Join-Path $ReceiptsDir "$($_.Name).receipt")) })
-    if ($availablePlugins.Count -eq 0) {
-        Write-Host "`n没有找到可安装的新插件。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    $confirmation = Read-Host "`n找到 $($availablePlugins.Count) 个可安装插件。确定要全部安装吗? (Y/N)"
-    if ($confirmation.ToLower() -ne 'y') {
-        Write-Host "操作已取消。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    foreach ($plugin in $availablePlugins) {
-        Invoke-PluginInstallation -PluginObject $plugin
-    }
-    Write-Host "`n`n所有可用插件均已安装完毕。" -ForegroundColor Cyan
-    Read-Host "按回车键返回主菜单..."
-}
-
-function Uninstall-AllL4D2Plugins {
-    Clear-Host
-    Write-Host "==================== 移除所有已安装插件 ===================="
-    $installedPlugins = @(Get-ChildItem -Path $ReceiptsDir -Filter "*.receipt")
-    if ($installedPlugins.Count -eq 0) {
-        Write-Host "`n当前没有任何已安装的插件。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    $confirmation = Read-Host "`n找到 $($installedPlugins.Count) 个已安装插件。确定要全部移除吗? (Y/N)"
-    if ($confirmation.ToLower() -ne 'y') {
-        Write-Host "操作已取消。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    foreach ($receipt in $installedPlugins) {
-        Invoke-PluginUninstallation -ReceiptObject $receipt
-    }
-    Write-Host "`n`n所有已安装的插件均已移除完毕。" -ForegroundColor Cyan
-    Read-Host "按回车键返回主菜单..."
-}
 #endregion
 
 
@@ -357,8 +312,6 @@ function Show-Menu {
     if ($IsSourceModInstalled) {
         Write-Host "   2. 安装插件"
         Write-Host "   3. 移除插件"
-        Write-Host "   4. 安装所有可用插件"
-        Write-Host "   5. 移除所有已安装插件"
     }
     Write-Host "`n   Q. 退出`n"
     Write-Host "========================================================"
@@ -372,8 +325,6 @@ while ($true) {
         "1" { Install-SourceModAndMetaMod }
         "2" { if ($IsSourceModInstalled) { Install-L4D2Plugin } }
         "3" { if ($IsSourceModInstalled) { Uninstall-L4D2Plugin } }
-        "4" { if ($IsSourceModInstalled) { Install-AllL4D2Plugins } }
-        "5" { if ($IsSourceModInstalled) { Uninstall-AllL4D2Plugins } }
         "q" { Write-Host "正在退出..."; exit }
     }
 }
