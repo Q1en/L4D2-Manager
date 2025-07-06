@@ -30,7 +30,7 @@ if (-not (Test-Path -Path $L4d2Dir)) {
     Write-Host ""
     Write-Host " 错误: 找不到求生之路2服务器的游戏目录!" -ForegroundColor Red
     Write-Host " 请编辑此脚本文件, 并正确设置 `$ServerRoot` 的值。"
-    Write-Host " 期望的目录: $L4d2Dir"
+    Write-Host " 当前设置的目录: $ServerRoot"
     Write-Host ""
     Read-Host "按回车键退出..."
     exit
