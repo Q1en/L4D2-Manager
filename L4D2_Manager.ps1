@@ -1,5 +1,5 @@
 ﻿# =================================================================
-# L4D2 服务器与插件管理器 2600 - Polaris
+# L4D2 服务器与插件管理器 2607 - Polaris
 # 作者: Q1en
 # 功能: 部署/更新L4D2服务器, 安装/更新 SourceMod & MetaMod, 并管理插件、服务器实例。
 # =================================================================
@@ -24,17 +24,10 @@ $SteamCMDPath = "C:\steamcmd\steamcmd.exe"
 $ServerInstances = @{
     "主服_战役" = @{
         Port = 27015
-        HostName = "[CN] Pure L4D2 Campaign Server"
+        HostName = "[CN] My L4D2 Campaign Server"
         MaxPlayers = 8
         StartMap = "c1m1_hotel"
-        ExtraParams = "+sv_gametypes 'coop,realism,survival' -tickrate 128"
-    }
-    "主服_战役_2333" = @{
-        Port = 2333
-        HostName = "[Aisa] Pure L4D2 Campaign Server"
-        MaxPlayers = 8
-        StartMap = "c1m1_hotel"
-        ExtraParams = "-tickrate 100 -nomaster -insecure"
+        ExtraParams = "+sv_gametypes 'coop,realism,survival'"
     }
     "副服_对抗" = @{
         Port = 27016
@@ -55,7 +48,7 @@ $InstallerDir = Join-Path -Path $ScriptDir -ChildPath "SourceMod_Installers"
 $PluginSourceDir = Join-Path -Path $ScriptDir -ChildPath "Available_Plugins"
 $ReceiptsDir = Join-Path -Path $ScriptDir -ChildPath "Installed_Receipts"
 $RunningProcesses = @{} # 用于存储正在运行的服务器进程信息
-$ScriptVersion = "2600 - Polaris"
+$ScriptVersion = "2607 - Polaris"
 $IsSourceModInstalled = $false
 $ScheduledTaskPrefix = "L4D2Manager" # 定时任务的前缀，用于识别和管理
 
@@ -310,7 +303,7 @@ function Start-L4D2ServerInstance {
     }
     $portInUse = $RunningProcesses.Values | Where-Object { $_.Port -eq $config.Port }
     if ($portInUse) { Write-Host "`n错误: 端口 $($config.Port) 已被实例 '$($portInUse.Name)' 占用 (PID: $($portInUse.PID))。" -ForegroundColor Red; Read-Host "按回车键返回..."; return }
-    $launchArgs = "-console -game left4dead2 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+    $launchArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
     Write-Host "`n即将使用以下参数启动服务器:" -ForegroundColor Cyan; Write-Host " $srcdsPath $launchArgs"
     try {
         $process = Start-Process -FilePath $srcdsPath -ArgumentList $launchArgs -PassThru
@@ -485,7 +478,7 @@ function New-ServerScheduledTask {
     if ($StartTask) {
         $program = "cmd.exe"
         $srcdsFullPath = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
-        $srcdsArgs = "-console -game left4dead2 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+        $srcdsArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
         $arguments = "/C START `"$selectedInstanceName`" `"$srcdsFullPath`" $srcdsArgs"
         $action = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $ServerRoot
     } else { # StopTask
@@ -628,14 +621,15 @@ function Uninstall-L4D2Plugin {
 #region 主菜单
 function Show-Menu {
     Clear-Host
-    $ServerStatusDisplay = if (Test-Path (Join-Path $ServerRoot "srcds.exe")) { Write-Host " 服务器状态: 已部署" -ForegroundColor Green } else { Write-Host " 服务器状态: 未部署" -ForegroundColor Yellow }
-    if (Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")) { $script:IsSourceModInstalled = $true } else { $script:IsSourceModInstalled = $false }
+    $isServerDeployed = Test-Path (Join-Path $ServerRoot "srcds.exe")
+    $IsSourceModInstalled = Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")
     Write-Host "========================================================"
     Write-Host "   L4D2 服务器与插件管理器 $ScriptVersion"
     Write-Host "========================================================"
     Write-Host ""
     Write-Host " 服务器安装目录: $ServerRoot"
     $ServerStatusDisplay
+    if ($isServerDeployed) { Write-Host " 服务器状态: 已部署" -ForegroundColor Green } else { Write-Host " 服务器状态: 未部署" -ForegroundColor Yellow }
     if ($IsSourceModInstalled) { Write-Host " SourceMod 状态: 已安装" -ForegroundColor Green } else { Write-Host " SourceMod 状态: 未找到!" -ForegroundColor Yellow }
     if ($RunningProcesses.Count -gt 0) { Write-Host " 运行中实例数: $($RunningProcesses.Count)" -ForegroundColor Cyan }
     Write-Host "`n ================ 服务器管理 ================"
