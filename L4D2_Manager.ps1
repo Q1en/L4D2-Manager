@@ -1,22 +1,23 @@
 ﻿# =================================================================
-# L4D2 服务器与插件管理器 2210
+# L4D2 服务器与插件管理器 2500
 # 作者: Q1en
-# 功能: 部署/更新L4D2服务器, 安装/更新 SourceMod & MetaMod, 并管理插件和服务器实例。
+# 功能: 部署/更新L4D2服务器, 安装/更新 SourceMod & MetaMod, 并管理插件、服务器实例。
 # =================================================================
 
 # 强制要求 PowerShell 5.1 或更高版本
 #requires -Version 5.1
+#requires -RunAsAdministrator
 
 # #################### 用户配置区 (请务必修改!) ####################
 #
-# 1. 设置您的L4D2服务器根目录 (脚本将在此处创建 'l4d2_server' 文件夹)
-#    例如: "D:\L4D2Server"
-$ServerRootBase = "D:\L4D2Server"
+# 1. 设置您的L4D2服务器安装目录 (此目录将包含 srcds.exe 等文件)
+#    例如: "D:\L4D2_Server"
+$ServerRoot = "D:\L4D2_Server"
 #
 # 2. 设置 SteamCMD.exe 的完整路径。脚本将使用它来下载和更新服务器。
 #    如果文件不存在，脚本会尝试自动下载。
 #    例如: "C:\steamcmd\steamcmd.exe"
-$SteamCMDPath = Join-Path -Path $ServerRootBase -ChildPath "steamcmd\steamcmd.exe"
+$SteamCMDPath = "C:\steamcmd\steamcmd.exe"
 #
 # 3. (可选) 预定义服务器实例配置
 #    您可以在这里预设多个服务器的启动参数。
@@ -41,25 +42,22 @@ $ServerInstances = @{
 
 
 # --- 脚本变量定义 ---
-$ServerRoot = Join-Path -Path $ServerRootBase -ChildPath "l4d2_server" # L4D2服务器的实际路径
-$L4d2Dir = Join-Path -Path $ServerRoot -ChildPath "left4dead2"
+$L4d2Dir = Join-Path -Path $ServerRoot -ChildPath "left4dead2" # L4D2游戏内容目录
 $ScriptDir = $PSScriptRoot
 $InstallerDir = Join-Path -Path $ScriptDir -ChildPath "SourceMod_Installers"
 $PluginSourceDir = Join-Path -Path $ScriptDir -ChildPath "Available_Plugins"
 $ReceiptsDir = Join-Path -Path $ScriptDir -ChildPath "Installed_Receipts"
 $RunningProcesses = @{} # 用于存储正在运行的服务器进程信息
-$ScriptVersion = "2210"
+$ScriptVersion = "2500"
 $IsSourceModInstalled = $false
+$ScheduledTaskPrefix = "L4D2Manager" # 定时任务的前缀，用于识别和管理
 
 # --- 初始化检查 ---
-if (-not (Test-Path -Path $ServerRootBase)) {
-    New-Item -Path $ServerRootBase -ItemType Directory -Force | Out-Null
-}
 if (-not (Test-Path -Path $L4d2Dir)) {
     Write-Host ""
-    Write-Host " 提示: 未找到求生之路2服务器目录。" -ForegroundColor Cyan
+    Write-Host " 提示: 未找到求生之路2服务器的游戏目录 ($L4d2Dir)。" -ForegroundColor Cyan
     Write-Host " 您可以稍后使用菜单中的 [部署服务器] 功能进行安装。"
-    Write-Host " 当前目标目录: $ServerRoot"
+    Write-Host " 配置的服务器安装目录: $ServerRoot"
     Write-Host ""
     Read-Host "按回车键继续..."
 }
@@ -82,77 +80,49 @@ function Show-InteractiveMenu {
         [Parameter(Mandatory=$true)] [string]$ConfirmKeyName,
         [switch]$SingleSelection
     )
-
     $currentIndex = 0
     $selectedIndexes = [System.Collections.Generic.List[int]]::new()
-
     while ($true) {
         Clear-Host
         Write-Host "$Title`n" -ForegroundColor Yellow
-        
         for ($i = 0; $i -lt $Items.Count; $i++) {
             $pointer = if ($i -eq $currentIndex) { "> " } else { "  " }
             $displayItem = $Items[$i]
-
             if (-not $SingleSelection) {
-                 $checkbox = if ($selectedIndexes.Contains($i)) { "[✓]" } else { "[ ]" }
-                 $displayItem = "$checkbox $($Items[$i])"
+                $checkbox = if ($selectedIndexes.Contains($i)) { "[✓]" } else { "[ ]" }
+                $displayItem = "$checkbox $($Items[$i])"
             }
-
             if ($i -eq $currentIndex) {
                 Write-Host "$pointer$displayItem" -ForegroundColor Black -BackgroundColor White
             } else {
                 Write-Host "$pointer$displayItem"
             }
         }
-        
         Write-Host ""
-        Write-Host ("-"*55)
-        Write-Host "  导航:       ↑ / ↓"
+        Write-Host ("-"*65)
+        Write-Host "  导航:        ↑ / ↓"
         if (-not $SingleSelection) {
             Write-Host "  选择/取消:  空格键 (Spacebar)"
             Write-Host "  全选/反选:  A"
         }
-        Write-Host "  确认操作:   $ConfirmKeyName ($($ConfirmKeyChar.ToUpper())) 或 Enter"
-        Write-Host "  返回:       Q"
-        Write-Host ("-"*55)
-
+        Write-Host "  确认操作:    $ConfirmKeyName ($($ConfirmKeyChar.ToUpper())) 或 Enter"
+        Write-Host "  返回:        Q"
+        Write-Host ("-"*65)
         $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-
         switch ($key.VirtualKeyCode) {
             38 { $currentIndex = ($currentIndex - 1 + $Items.Count) % $Items.Count } # Up
             40 { $currentIndex = ($currentIndex + 1) % $Items.Count } # Down
-            32 { # Spacebar
-                if (-not $SingleSelection) {
-                    if ($selectedIndexes.Contains($currentIndex)) { [void]$selectedIndexes.Remove($currentIndex) }
-                    else { $selectedIndexes.Add($currentIndex) }
-                }
-            }
-            65 { # 'A' key for All/None
-                 if (-not $SingleSelection) {
-                    if ($selectedIndexes.Count -lt $Items.Count) {
-                        $selectedIndexes.Clear(); 0..($Items.Count - 1) | ForEach-Object { $selectedIndexes.Add($_) }
-                    } else {
-                        $selectedIndexes.Clear()
-                    }
-                }
-            }
-            81 { return $null } # 'Q' key for Quit
-            13 { # Enter Key
-                if ($SingleSelection) { return $Items[$currentIndex] }
-                else { return $selectedIndexes | ForEach-Object { $Items[$_] } }
-            }
+            32 { if (-not $SingleSelection) { if ($selectedIndexes.Contains($currentIndex)) { [void]$selectedIndexes.Remove($currentIndex) } else { $selectedIndexes.Add($currentIndex) } } } # Spacebar
+            65 { if (-not $SingleSelection) { if ($selectedIndexes.Count -lt $Items.Count) { $selectedIndexes.Clear(); 0..($Items.Count - 1) | ForEach-Object { $selectedIndexes.Add($_) } } else { $selectedIndexes.Clear() } } } # 'A'
+            81 { return $null } # 'Q'
+            13 { if ($SingleSelection) { return $Items[$currentIndex] } else { return $selectedIndexes | ForEach-Object { $Items[$_] } } } # Enter
         }
-        
-        if ($key.Character -eq $ConfirmKeyChar.ToLower()) {
-             if ($SingleSelection) { return $Items[$currentIndex] }
-             else { return $selectedIndexes | ForEach-Object { $Items[$_] } }
-        }
+        if ($key.Character -eq $ConfirmKeyChar.ToLower()) { if ($SingleSelection) { return $Items[$currentIndex] } else { return $selectedIndexes | ForEach-Object { $Items[$_] } } }
     }
 }
 
 
-# --- 辅助函数 (插件操作的核心逻辑) ---
+# --- 辅助函数 ---
 #region 辅助函数
 function Invoke-PluginInstallation {
     param([Parameter(Mandatory=$true)] [System.IO.DirectoryInfo]$PluginObject)
@@ -162,12 +132,10 @@ function Invoke-PluginInstallation {
     Write-Host "`n--- 开始安装 '$pluginName' ---" -ForegroundColor White
     try {
         Write-Host " > 正在创建文件清单..."
-        Get-ChildItem -Path $pluginPath -Recurse -File | ForEach-Object {
-            $_.FullName.Substring($pluginPath.Length + 1)
-        } | Out-File -FilePath $receiptPath -Encoding utf8
+        Get-ChildItem -Path $pluginPath -Recurse -File | ForEach-Object { $_.FullName.Substring($pluginPath.Length + 1) } | Out-File -FilePath $receiptPath -Encoding utf8
         Write-Host " > 正在将文件复制到服务器目录..."
         robocopy $pluginPath $ServerRoot /E /NFL /NDL /NJH /NJS /nc /ns /np | Out-Null
-        Remove-Item -Path $pluginPath -Recurse -Force # 使用复制+删除代替移动，避免跨驱动器问题
+        Remove-Item -Path $pluginPath -Recurse -Force
         Write-Host "   成功! 插件 '$pluginName' 已安装。" -ForegroundColor Green
     } catch {
         Write-Host "   错误! 安装插件 '$pluginName' 时发生意外: $($_.Exception.Message)" -ForegroundColor Red
@@ -183,31 +151,42 @@ function Invoke-PluginUninstallation {
         $filesToMove = Get-Content -Path $receiptPath
         foreach ($relativePath in $filesToMove) {
             $serverFile = Join-Path -Path $ServerRoot -ChildPath $relativePath
-            
             $pluginReclaimFolder = Join-Path -Path $PluginSourceDir -ChildPath $pluginName
             $destinationFile = Join-Path -Path $pluginReclaimFolder -ChildPath $relativePath
-            
             if (Test-Path -Path $serverFile) {
                 $parentDir = Split-Path -Path $destinationFile -Parent
-                if (-not (Test-Path -Path $parentDir)) {
-                    New-Item -Path $parentDir -ItemType Directory -Force | Out-Null
-                }
+                if (-not (Test-Path -Path $parentDir)) { New-Item -Path $parentDir -ItemType Directory -Force | Out-Null }
                 Move-Item -Path $serverFile -Destination $destinationFile -Force
             }
         }
-        # 清理空目录
         Get-Content $receiptPath | ForEach-Object { Split-Path -Path $_ -Parent } | Sort-Object -Unique | Sort-Object -Property Length -Descending | ForEach-Object {
             if (-not [string]::IsNullOrEmpty($_)) {
                 $dirOnServer = Join-Path -Path $ServerRoot -ChildPath $_
-                if ((Test-Path $dirOnServer) -and -not (Get-ChildItem -Path $dirOnServer)) {
-                    Remove-Item -Path $dirOnServer -Force -ErrorAction SilentlyContinue
-                }
+                if ((Test-Path $dirOnServer) -and -not (Get-ChildItem -Path $dirOnServer)) { Remove-Item -Path $dirOnServer -Force -ErrorAction SilentlyContinue }
             }
         }
         Remove-Item -Path $receiptPath -Force
         Write-Host " > 成功! 插件 '$pluginName' 的所有文件已被移回。" -ForegroundColor Green
     } catch {
         Write-Host " > 错误! 移除插件 '$pluginName' 时发生意外: $($_.Exception.Message)" -ForegroundColor Red
+    }
+}
+
+function Update-RunningProcessList {
+    $processesToRemove = @()
+    foreach ($key in $RunningProcesses.Keys) {
+        $processId = $RunningProcesses[$key].PID
+        if (-not (Get-Process -Id $processId -ErrorAction SilentlyContinue)) {
+            $processesToRemove += $key
+        }
+    }
+
+    if ($processesToRemove.Count -gt 0) {
+        Write-Host "`n`n检测到有 $($processesToRemove.Count) 个实例已在外部关闭，正在更新列表..." -ForegroundColor Yellow
+        foreach ($key in $processesToRemove) {
+            $RunningProcesses.Remove($key)
+        }
+        Start-Sleep -Seconds 1
     }
 }
 #endregion
@@ -219,17 +198,14 @@ function Deploy-L4D2Server {
     Clear-Host
     Write-Host "==================== 部署L4D2专用服务器 ===================="
     Write-Host "`n此功能将使用 SteamCMD 下载或更新 Left 4 Dead 2 Dedicated Server。"
-    Write-Host "服务器将被安装到: $ServerRoot"
+    Write-Host "服务器将被安装到您配置的目录: $ServerRoot" -ForegroundColor Yellow
     Write-Host "将使用 SteamCMD: $SteamCMDPath"
     Write-Host ""
     
-    # 检查并下载SteamCMD
     if (-not (Test-Path $SteamCMDPath)) {
         Write-Host "未找到 SteamCMD，将尝试自动下载..." -ForegroundColor Yellow
         $steamCmdDir = Split-Path -Path $SteamCMDPath -Parent
-        if (-not (Test-Path $steamCmdDir)) {
-            New-Item -Path $steamCmdDir -ItemType Directory -Force | Out-Null
-        }
+        if (-not (Test-Path $steamCmdDir)) { New-Item -Path $steamCmdDir -ItemType Directory -Force | Out-Null }
         $zipPath = Join-Path $steamCmdDir "steamcmd.zip"
         try {
             Invoke-WebRequest -Uri "https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip" -OutFile $zipPath
@@ -243,10 +219,20 @@ function Deploy-L4D2Server {
         }
     }
 
+    if (-not (Test-Path -Path $ServerRoot)) {
+        try {
+            Write-Host "指定的服务器目录不存在，正在按配置创建: $ServerRoot" -ForegroundColor Cyan
+            New-Item -Path $ServerRoot -ItemType Directory -Force | Out-Null
+        } catch {
+            Write-Host "创建目录 '$ServerRoot' 失败: $($_.Exception.Message)" -ForegroundColor Red
+            Read-Host "请检查权限或手动创建该目录。按回车键返回。"
+            return
+        }
+    }
+
     Write-Host "`n准备就绪，即将开始执行 SteamCMD..."
     Read-Host "按回车键开始部署..."
 
-    # 执行SteamCMD命令
     $steamCmdArgs = "+force_install_dir `"$ServerRoot`" +login anonymous +app_update 222860 validate +quit"
     try {
         $process = Start-Process -FilePath $SteamCMDPath -ArgumentList $steamCmdArgs -Wait -PassThru
@@ -257,7 +243,7 @@ function Deploy-L4D2Server {
             Write-Host "请检查上面的日志输出。"
         }
     } catch {
-         Write-Host "`n执行 SteamCMD 失败: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "`n执行 SteamCMD 失败: $($_.Exception.Message)" -ForegroundColor Red
     }
 
     Write-Host "=========================================================="
@@ -268,6 +254,7 @@ function Deploy-L4D2Server {
 #region 服务器实例管理
 function Manage-ServerInstances {
     while ($true) {
+        Update-RunningProcessList
         Clear-Host
         Write-Host "==================== 服务器实例管理 ===================="
         Write-Host "`n当前正在运行的实例:"
@@ -281,7 +268,8 @@ function Manage-ServerInstances {
         Write-Host "`n请选择操作:"
         Write-Host "  1. 启动一个新的服务器实例"
         Write-Host "  2. 关闭一个正在运行的实例"
-        Write-Host "  3. 生成服务器定时任务命令行"
+        Write-Host "  3. 管理定时任务 (BETA)"
+        Write-Host "  4. 生成手动任务命令行"
         Write-Host "`n  Q. 返回主菜单"
         Write-Host "========================================================"
         
@@ -289,7 +277,8 @@ function Manage-ServerInstances {
         switch ($choice) {
             "1" { Start-L4D2ServerInstance }
             "2" { Stop-L4D2ServerInstance }
-            "3" { Generate-ScheduledTaskCommands }
+            "3" { Manage-ScheduledTasks }
+            "4" { Generate-ManualTaskCommands }
             "q" { return }
         }
     }
@@ -297,100 +286,60 @@ function Manage-ServerInstances {
 
 function Start-L4D2ServerInstance {
     $srcdsPath = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
-    if (-not (Test-Path $srcdsPath)) {
-        Write-Host "`n错误: 找不到 srcds.exe。请先部署服务器。" -ForegroundColor Red
-        Read-Host "按回车键返回..."
-        return
-    }
-
-    $instanceOptions = $ServerInstances.Keys | ForEach-Object { "$_ (端口: $($ServerInstances[$_].Port))" }
-    $instanceOptions += "手动配置新实例"
-    
+    if (-not (Test-Path $srcdsPath)) { Write-Host "`n错误: 找不到 srcds.exe。请先部署服务器。" -ForegroundColor Red; Read-Host "按回车键返回..."; return }
+    $instanceOptions = $ServerInstances.Keys | ForEach-Object { "$_ (端口: $($ServerInstances[$_].Port))" }; $instanceOptions += "手动配置新实例"
     $selected = Show-InteractiveMenu -Items $instanceOptions -Title "请选择要启动的服务器实例配置" -ConfirmKeyChar 's' -ConfirmKeyName "启动" -SingleSelection
-
     if (-not $selected) { return }
-
     $config = $null
     if ($selected -eq "手动配置新实例") {
         Write-Host "`n--- 手动配置新实例 ---" -ForegroundColor Yellow
-        $config = @{
-            Port = Read-Host "请输入端口号 (例如 27015)"
-            HostName = Read-Host "请输入服务器名称"
-            MaxPlayers = Read-Host "请输入最大玩家数 (例如 8)"
-            StartMap = Read-Host "请输入初始地图 (例如 c1m1_hotel)"
-            ExtraParams = Read-Host "请输入其他启动参数 (可留空)"
-        }
+        $config = @{ Port = Read-Host "请输入端口号 (例如 27015)"; HostName = Read-Host "请输入服务器名称"; MaxPlayers = Read-Host "请输入最大玩家数 (例如 8)"; StartMap = Read-Host "请输入初始地图 (例如 c1m1_hotel)"; ExtraParams = Read-Host "请输入其他启动参数 (可留空)" }
     } else {
-        $instanceName = ($selected -split ' ')[0]
-        $config = $ServerInstances[$instanceName]
-        $config.Name = $instanceName # 将名称加入配置中
+        $instanceName = ($selected -split ' ')[0]; $config = $ServerInstances[$instanceName]; $config.Name = $instanceName
     }
-    
-    # 检查端口是否已被此脚本启动的进程占用
     $portInUse = $RunningProcesses.Values | Where-Object { $_.Port -eq $config.Port }
-    if ($portInUse) {
-        Write-Host "`n错误: 端口 $($config.Port) 已被实例 '$($portInUse.Name)' 占用 (PID: $($portInUse.PID))。" -ForegroundColor Red
-        Read-Host "按回车键返回..."
-        return
-    }
-
-    # 构建启动参数
+    if ($portInUse) { Write-Host "`n错误: 端口 $($config.Port) 已被实例 '$($portInUse.Name)' 占用 (PID: $($portInUse.PID))。" -ForegroundColor Red; Read-Host "按回车键返回..."; return }
     $launchArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
-    
-    Write-Host "`n即将使用以下参数启动服务器:" -ForegroundColor Cyan
-    Write-Host " $srcdsPath $launchArgs"
-    
+    Write-Host "`n即将使用以下参数启动服务器:" -ForegroundColor Cyan; Write-Host " $srcdsPath $launchArgs"
     try {
         $process = Start-Process -FilePath $srcdsPath -ArgumentList $launchArgs -PassThru
         $instanceName = if ($config.Name) { $config.Name } else { "手动实例_port$($config.Port)" }
         $RunningProcesses[$instanceName] = @{ PID = $process.Id; Port = $config.Port; Name = $instanceName }
         Write-Host "`n服务器实例 '$instanceName' 已成功启动! (PID: $($process.Id))" -ForegroundColor Green
-    } catch {
-        Write-Host "`n启动服务器失败: $($_.Exception.Message)" -ForegroundColor Red
-    }
+    } catch { Write-Host "`n启动服务器失败: $($_.Exception.Message)" -ForegroundColor Red }
     Read-Host "按回车键返回..."
 }
 
 function Stop-L4D2ServerInstance {
-    if ($RunningProcesses.Count -eq 0) {
-        Write-Host "`n当前没有由本脚本启动的正在运行的实例。" -ForegroundColor Yellow
-        Read-Host "按回车键返回..."
-        return
-    }
-
+    if ($RunningProcesses.Count -eq 0) { Write-Host "`n当前没有由本脚本启动的正在运行的实例。" -ForegroundColor Yellow; Read-Host "按回车键返回..."; return }
     $runningNames = $RunningProcesses.Keys | ForEach-Object { "$_ (PID: $($RunningProcesses[$_].PID))" }
     $selected = Show-InteractiveMenu -Items $runningNames -Title "请选择要关闭的服务器实例" -ConfirmKeyChar 'k' -ConfirmKeyName "关闭" -SingleSelection
-
     if (-not $selected) { return }
-
-    $instanceNameToStop = ($selected -split ' ')[0]
-    $processInfo = $RunningProcesses[$instanceNameToStop]
-
+    $instanceNameToStop = ($selected -split ' ')[0]; $processInfo = $RunningProcesses[$instanceNameToStop]
     Write-Host "`n正在尝试关闭实例 '$instanceNameToStop' (PID: $($processInfo.PID))..."
     try {
         Stop-Process -Id $processInfo.PID -Force -ErrorAction Stop
         Write-Host "进程已成功关闭。" -ForegroundColor Green
         $RunningProcesses.Remove($instanceNameToStop)
     } catch {
-        Write-Host "关闭进程失败: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "该进程可能已被手动关闭。"
-        $RunningProcesses.Remove($instanceNameToStop) # 无论如何都从列表中移除
+        Write-Host "关闭进程失败: $($_.Exception.Message)" -ForegroundColor Red; Write-Host "该进程可能已被手动关闭。"; $RunningProcesses.Remove($instanceNameToStop)
     }
     Read-Host "按回车键返回..."
 }
 
-function Generate-ScheduledTaskCommands {
+function Generate-ManualTaskCommands {
     Clear-Host
-    Write-Host "==================== 生成定时任务命令行 ===================="
-    Write-Host "此功能会为您预设的服务器实例生成用于 Windows 任务计划程序的命令行。"
-    Write-Host "您可以复制这些命令来创建定时开机和关机任务。"
+    Write-Host "==================== 生成手动任务命令行 ====================" -ForegroundColor Yellow
+    Write-Host @"
+
+此功能为您预设的服务器实例，生成独立的启动和停止命令行。
+您可以将这些命令手动复制到 Windows 的【任务计划程序】中。
+如果希望在脚本内直接管理定时任务，请使用主菜单的【管理定时任务】功能。
+
+"@ -ForegroundColor Cyan
     Write-Host "------------------------------------------------------------`n"
 
-    if ($ServerInstances.Count -eq 0) {
-        Write-Host "您尚未在脚本中预定义任何服务器实例 (`$ServerInstances`)。" -ForegroundColor Yellow
-        Read-Host "按回车键返回..."
-        return
-    }
+    if ($ServerInstances.Count -eq 0) { Write-Host "您尚未在脚本中预定义任何服务器实例 (`$ServerInstances`)。" -ForegroundColor Yellow; Read-Host "按回车键返回..."; return }
     
     $srcdsPath = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
 
@@ -398,26 +347,221 @@ function Generate-ScheduledTaskCommands {
         $config = $ServerInstances[$name]
         $launchArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
         
-        Write-Host "实例: '$name'" -ForegroundColor Yellow
+        Write-Host "实例: '$name' (端口: $($config.Port))" -ForegroundColor Yellow
         
-        # 启动命令
-        Write-Host "  [定时启动] 命令:" -ForegroundColor Green
+        Write-Host "  [定时启动 '$name'] 命令:" -ForegroundColor Green
+        Write-Host "    说明: 此命令会启动 '$name' 实例。"
         Write-Host "    程序/脚本: " -NoNewline; Write-Host "`"$srcdsPath`"" -ForegroundColor Cyan
         Write-Host "    添加参数: " -NoNewline; Write-Host $launchArgs -ForegroundColor Cyan
         
-        # 关闭命令
-        $taskkillCmd = "taskkill /F /IM srcds.exe /FI `"hostname eq $($config.HostName)`"" # 注意：此方法依赖于hostname，不够精确
-        $taskkillCmdPrecise = "wmic process where `"commandline like '%-port $($config.Port)%`" call terminate" # 更精确的方法
-        Write-Host "  [定时关闭] 命令 (推荐，较精确):" -ForegroundColor Green
+        Write-Host "  [定时关闭 '$name'] 命令 (推荐):" -ForegroundColor Green
+        Write-Host "    说明: 此命令会通过查找使用端口 $($config.Port) 的进程来精确停止 '$name' 实例。"
         Write-Host "    程序/脚本: " -NoNewline; Write-Host "wmic" -ForegroundColor Cyan
         Write-Host "    添加参数: " -NoNewline; Write-Host "process where `"commandline like '%-port $($config.Port)%'`" call terminate" -ForegroundColor Cyan
         Write-Host ""
     }
 
     Write-Host "========================================================"
-    Write-Host "提示: 'wmic' 命令更为精确，因为它通过端口号来识别进程。"
-    Write-Host "请在创建任务计划程序时，将“程序/脚本”和“添加参数”分别填入对应栏位。"
+    Write-Host "提示: 'wmic' 命令更为精确。请在创建任务计划程序时，将“程序/脚本”和“添加参数”分别填入对应栏位。"
     Read-Host "`n按回车键返回..."
+}
+#endregion
+
+#region 定时任务管理
+function Manage-ScheduledTasks {
+    while($true) {
+        Clear-Host
+        Write-Host "==================== 定时任务管理 (BETA) ====================" -ForegroundColor Yellow
+        Write-Host "`n此功能允许您直接创建、查看和删除服务器的定时任务。"
+        Write-Host "状态说明: [任务状态 | 服务状态] - 任务名 | 触发时间" -ForegroundColor Cyan
+        Write-Host " - 任务状态: `就绪`表示会自动执行, `已禁用`则不会。"
+        Write-Host " - 服务状态: `运行中`表示服务器进程存在, `未运行`则表示已关闭。"
+        Write-Host ""
+        Write-Host "现有任务:"
+        
+        $processCheckCache = @{}
+        $existingTasks = Get-ScheduledTask -TaskPath "\" -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "$($ScheduledTaskPrefix)_*" }
+        
+        if ($existingTasks) {
+            foreach($task in $existingTasks) {
+                # 1. 获取任务状态 (就绪/禁用)
+                $taskStateStr = if($task.State -eq "Disabled") { 
+                    Write-Host "[任务: " -NoNewline
+                    Write-Host "已禁用" -ForegroundColor Gray -NoNewline
+                } else {
+                    Write-Host "[任务: " -NoNewline
+                    Write-Host "就绪" -ForegroundColor Green -NoNewline
+                }
+                Write-Host " | " -NoNewline
+
+                # 2. 获取服务进程的真实状态
+                $port = 0
+                if ($task.TaskName -match "Port(\d+)") { $port = $Matches[1] }
+                
+                $isProcessRunning = $false
+                if ($port -ne 0) {
+                    if ($processCheckCache.ContainsKey($port)) {
+                        $isProcessRunning = $processCheckCache[$port]
+                    } else {
+                        $isProcessRunning = [bool](Get-CimInstance Win32_Process -Filter "Name = 'srcds.exe' and CommandLine like '%-port $port%'")
+                        $processCheckCache[$port] = $isProcessRunning
+                    }
+                }
+
+                Write-Host "服务: " -NoNewline
+                if ($isProcessRunning) {
+                    Write-Host "运行中" -ForegroundColor Cyan -NoNewline
+                } else {
+                    Write-Host "未运行" -ForegroundColor Red -NoNewline
+                }
+                Write-Host "] " -NoNewline
+
+                # 3. 【修正】通过读取 StartBoundary 属性来可靠地获取时间
+                $triggerTime = "未知"
+                if ($task.Triggers -and $task.Triggers.Count -gt 0) {
+                    try {
+                        # 读取 StartBoundary (例如 "2025-07-09T22:30:00")
+                        $startBoundary = $task.Triggers[0].StartBoundary
+                        if (-not [string]::IsNullOrEmpty($startBoundary)) {
+                            # 将其转换为DateTime对象并格式化为 HH:mm
+                            $triggerTime = ([datetime]::Parse($startBoundary)).ToString("HH:mm")
+                        }
+                    } catch {
+                        $triggerTime = "错误" # 如果解析失败则显示错误
+                    }
+                }
+                
+                Write-Host "- $($task.TaskName) | 触发器: 每天 $triggerTime"
+            }
+        } else {
+            Write-Host "  (未找到由本工具创建的定时任务)"
+        }
+        
+        Write-Host "`n请选择操作:"
+        Write-Host "  1. 新建 - 定时启动任务"
+        Write-Host "  2. 新建 - 定时停止任务"
+        Write-Host "  3. 查看并删除现有任务"
+        Write-Host "`n  Q. 返回服务器实例管理"
+        Write-Host "==========================================================="
+
+        $choice = Read-Host "请输入选项编号并按回车"
+        switch ($choice) {
+            "1" { New-ServerScheduledTask -StartTask }
+            "2" { New-ServerScheduledTask -StopTask }
+            "3" { View-DeleteScheduledTasks }
+            "q" { return }
+        }
+    }
+}
+
+function New-ServerScheduledTask {
+    param (
+        [switch]$StartTask,
+        [switch]$StopTask
+    )
+    Clear-Host
+    $actionType = if ($StartTask) { "启动" } else { "停止" }
+    $instanceOptions = @($ServerInstances.Keys)
+    if ($instanceOptions.Count -eq 0) { Write-Host "错误: 脚本中未预定义任何服务器实例 (`$ServerInstances`)。" -ForegroundColor Red; Read-Host "按回车键返回..."; return }
+
+    $selectedInstanceName = Show-InteractiveMenu -Items $instanceOptions -Title "请选择要为其创建定时 [${actionType}] 任务的实例" -ConfirmKeyChar 'c' -ConfirmKeyName "选择" -SingleSelection
+    if (-not $selectedInstanceName) { return }
+
+    $config = $ServerInstances[$selectedInstanceName]
+    $port = $config.Port
+    
+    while($true) {
+        $time = Read-Host "`n请输入每天定时${actionType}的时间 (24小时制, 格式 HH:mm, 例如 22:30)"
+        try {
+            [datetime]::ParseExact($time, "HH:mm", $null)
+            break
+        } catch {
+            Write-Host "时间格式错误，请输入有效的 HH:mm 格式。" -ForegroundColor Red
+        }
+    }
+
+    $taskName = "$($ScheduledTaskPrefix)_${actionType}_${selectedInstanceName}_Port${port}"
+    $taskDescription = "由L4D2管理器创建，用于在每天 $time 定时${actionType}服务器实例 '$selectedInstanceName' (端口: $port)。"
+    
+    if ($StartTask) {
+        $program = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
+        $arguments = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+        $action = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $ServerRoot
+    } else { # StopTask
+        $program = "wmic.exe"
+        $arguments = "process where `"commandline like '%-port $port%'`" call terminate"
+        $action = New-ScheduledTaskAction -Execute $program -Argument $arguments
+    }
+
+    $trigger = New-ScheduledTaskTrigger -Daily -At $time
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
+    
+    Write-Host "`n--- 任务详情预览 ---" -ForegroundColor Cyan
+    Write-Host "任务名称: $taskName"
+    Write-Host "任务描述: $taskDescription"
+    Write-Host "执行程序: $program"
+    Write-Host "程序参数: $arguments"
+    Write-Host "触发时间: 每天 $time"
+    Write-Host "----------------------"
+    
+    if ((Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
+        Write-Host "`n警告: 名为 '$taskName' 的任务已存在。" -ForegroundColor Yellow
+        $overwrite = Read-Host "是否要覆盖它? (y/n)"
+        if ($overwrite -ne 'y') { Write-Host "操作已取消。"; Read-Host "按回车键返回..."; return }
+    }
+
+    try {
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Description $taskDescription -Settings $settings -User "NT AUTHORITY\SYSTEM" -RunLevel Highest -Force -ErrorAction Stop
+        Write-Host "`n成功创建/更新了定时任务 '$taskName'!" -ForegroundColor Green
+    } catch {
+        Write-Host "`n创建定时任务失败: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host "请确保您是以【管理员身份】运行此脚本。"
+    }
+    Read-Host "按回车键返回..."
+}
+
+function View-DeleteScheduledTasks {
+    while($true){
+        Clear-Host
+        Write-Host "==================== 查看并删除定时任务 ====================" -ForegroundColor Yellow
+        $tasks = Get-ScheduledTask -TaskPath "\" -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -like "$($ScheduledTaskPrefix)_*" }
+        if (-not $tasks) {
+            Write-Host "`n没有找到由本工具创建的定时任务。"
+            Read-Host "按回车键返回..."
+            return
+        }
+        
+        $taskDisplayList = $tasks | ForEach-Object {
+            $triggerTime = "未知"
+            if ($_.Triggers -and $_.Triggers.Count -gt 0) {
+                try {
+                    $startBoundary = $_.Triggers[0].StartBoundary
+                    if (-not [string]::IsNullOrEmpty($startBoundary)) {
+                        $triggerTime = ([datetime]::Parse($startBoundary)).ToString("HH:mm")
+                    }
+                } catch {}
+            }
+            "$($_.TaskName) | 触发器: 每天 $triggerTime"
+        }
+        $selectedToDelete = Show-InteractiveMenu -Items $taskDisplayList -Title "请选择要删除的定时任务 (可多选)" -ConfirmKeyChar 'd' -ConfirmKeyName "删除"
+        
+        if (-not $selectedToDelete) { return }
+
+        Clear-Host
+        Write-Host "--- 开始删除任务 ---"
+        foreach ($item in $selectedToDelete) {
+            $taskNameToDelete = ($item -split ' \| ')[0]
+            Write-Host "正在删除任务: '$taskNameToDelete'..."
+            try {
+                Unregister-ScheduledTask -TaskName $taskNameToDelete -Confirm:$false -ErrorAction Stop
+                Write-Host "  成功!" -ForegroundColor Green
+            } catch {
+                Write-Host "  失败: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        }
+        Write-Host "--------------------"
+        Read-Host "`n删除操作已完成，按回车键返回..."
+    }
 }
 #endregion
 
@@ -425,140 +569,54 @@ function Generate-ScheduledTaskCommands {
 function Install-SourceModAndMetaMod {
     Clear-Host
     Write-Host "==================== 安装 SourceMod & MetaMod ===================="
-    if (-not(Test-Path -Path (Join-Path -Path $ServerRoot -ChildPath "srcds.exe"))) {
-        Write-Host "`n错误: 服务器尚未部署 (找不到srcds.exe)。" -ForegroundColor Red
-        Write-Host "请先从主菜单选择 [部署服务器] 选项。"
-        Read-Host "按回车键返回..."
-        return
-    }
-    Write-Host "`n此功能将自动解压并安装最新版的 SourceMod 和 MetaMod。"
-    Write-Host "请确保您已完成以下步骤:"
+    if (-not(Test-Path -Path (Join-Path -Path $ServerRoot -ChildPath "srcds.exe"))) { Write-Host "`n错误: 服务器尚未部署 (找不到srcds.exe)。" -ForegroundColor Red; Write-Host "请先从主菜单选择 [部署服务器] 选项。"; Read-Host "按回车键返回..."; return }
+    Write-Host "`n此功能将自动解压并安装最新版的 SourceMod 和 MetaMod。`n请确保您已完成以下步骤:"
     Write-Host "1. 从官网下载了 SourceMod 和 MetaMod:Source 的 Windows 版本。"
     Write-Host "   - MetaMod: https://www.sourcemm.net/downloads.php"
     Write-Host "   - SourceMod: https://www.sourcemod.net/downloads.php"
-    Write-Host "2. 将下载的 .zip 文件放入以下目录:"
-    Write-Host "   $InstallerDir"
-    Read-Host "`n准备就绪后，按回车键开始安装..."
-    Write-Host ""
-
-    # 安装 MetaMod
+    Write-Host "2. 将下载的 .zip 文件放入以下目录: `n   $InstallerDir"
+    Read-Host "`n准备就绪后，按回车键开始安装..." ; Write-Host ""
     $metamodZip = Get-ChildItem -Path $InstallerDir -Filter "mmsource-*.zip" | Sort-Object Name -Descending | Select-Object -First 1
     if ($metamodZip) {
-        Write-Host "发现 MetaMod 安装包: $($metamodZip.Name)"
-        Write-Host "正在解压到服务器目录..."
-        try {
-            Expand-Archive -Path $metamodZip.FullName -DestinationPath $L4d2Dir -Force -ErrorAction Stop
-            Write-Host "解压完成。" -ForegroundColor Green
-            Write-Host "正在创建 'metamod.vdf' 以引导服务器加载..."
-            $vdfContent = @"
-"Plugin"
-{
-    "file"  "addons/metamod/bin/server"
-}
-"@
-            [System.IO.File]::WriteAllText((Join-Path $L4d2Dir "metamod.vdf"), $vdfContent, [System.Text.Encoding]::Default)
-            Write-Host "'metamod.vdf' 创建成功!`n" -ForegroundColor Green
-        } catch {
-            Write-Host "解压 MetaMod 时出错: $($_.Exception.Message)`n" -ForegroundColor Red
-        }
-    } else {
-        Write-Host "警告: 在 '$InstallerDir' 中未找到 MetaMod 的 .zip 安装包。`n" -ForegroundColor Yellow
-    }
-
-    # 安装 SourceMod
+        Write-Host "发现 MetaMod 安装包: $($metamodZip.Name)`n正在解压到服务器目录..."
+        try { Expand-Archive -Path $metamodZip.FullName -DestinationPath $L4d2Dir -Force -ErrorAction Stop; Write-Host "解压完成。" -ForegroundColor Green; Write-Host "正在创建 'metamod.vdf' 以引导服务器加载..."; $vdfContent = "`"Plugin`"`n{`n`t`"file`"`t`"addons/metamod/bin/server`"`n}"; [System.IO.File]::WriteAllText((Join-Path $L4d2Dir "metamod.vdf"), $vdfContent, [System.Text.Encoding]::Default); Write-Host "'metamod.vdf' 创建成功!`n" -ForegroundColor Green } catch { Write-Host "解压 MetaMod 时出错: $($_.Exception.Message)`n" -ForegroundColor Red }
+    } else { Write-Host "警告: 在 '$InstallerDir' 中未找到 MetaMod 的 .zip 安装包。`n" -ForegroundColor Yellow }
     $sourcemodZip = Get-ChildItem -Path $InstallerDir -Filter "sourcemod-*.zip" | Sort-Object Name -Descending | Select-Object -First 1
     if ($sourcemodZip) {
-        Write-Host "发现 SourceMod 安装包: $($sourcemodZip.Name)"
-        Write-Host "正在解压到服务器目录..."
-        try {
-            Expand-Archive -Path $sourcemodZip.FullName -DestinationPath $L4d2Dir -Force -ErrorAction Stop
-            Write-Host "解压完成。`n" -ForegroundColor Green
-        } catch {
-            Write-Host "解压 SourceMod 时出错: $($_.Exception.Message)`n" -ForegroundColor Red
-        }
-    } else {
-        Write-Host "警告: 在 '$InstallerDir' 中未找到 SourceMod 的 .zip 安装包。`n" -ForegroundColor Yellow
-    }
-
-    Write-Host "======================================================="
-    Write-Host " 安装流程执行完毕!" -ForegroundColor Cyan
-    Write-Host " 请重启您的L4D2服务器以应用所有更改。"
-    Write-Host " 重启后, 您可以重新运行此脚本来管理插件。"
-    Write-Host "======================================================="
-    Write-Host ""
-    if (Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")) {
-        $script:IsSourceModInstalled = $true
-    }
+        Write-Host "发现 SourceMod 安装包: $($sourcemodZip.Name)`n正在解压到服务器目录..."
+        try { Expand-Archive -Path $sourcemodZip.FullName -DestinationPath $L4d2Dir -Force -ErrorAction Stop; Write-Host "解压完成。`n" -ForegroundColor Green } catch { Write-Host "解压 SourceMod 时出错: $($_.Exception.Message)`n" -ForegroundColor Red }
+    } else { Write-Host "警告: 在 '$InstallerDir' 中未找到 SourceMod 的 .zip 安装包。`n" -ForegroundColor Yellow }
+    Write-Host "=======================================================`n 安装流程执行完毕!" -ForegroundColor Cyan; Write-Host " 请重启您的L4D2服务器以应用所有更改。`n 重启后, 您可以重新运行此脚本来管理插件。`n======================================================="; Write-Host ""
+    if (Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")) { $script:IsSourceModInstalled = $true }
     Read-Host "按回车键返回主菜单..."
 }
 #endregion
 
 #region 插件管理功能
 function Install-L4D2Plugin {
-    if (-not $IsSourceModInstalled) {
-        Write-Host "`n错误: SourceMod尚未安装，无法管理插件。" -ForegroundColor Red
-        Read-Host "请先安装SourceMod。按回车键返回..."
-        return
-    }
+    if (-not $IsSourceModInstalled) { Write-Host "`n错误: SourceMod尚未安装，无法管理插件。" -ForegroundColor Red; Read-Host "请先安装SourceMod。按回车键返回..."; return }
     $availablePlugins = @(Get-ChildItem -Path $PluginSourceDir -Directory | Where-Object { -not (Test-Path (Join-Path $ReceiptsDir "$($_.Name).receipt")) })
-    if ($availablePlugins.Count -eq 0) {
-        Clear-Host
-        Write-Host "没有找到可安装的新插件。"
-        Write-Host "请将插件文件夹放入 '$PluginSourceDir' 目录中。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    
+    if ($availablePlugins.Count -eq 0) { Clear-Host; Write-Host "没有找到可安装的新插件。`n请将插件文件夹放入 '$PluginSourceDir' 目录中。"; Read-Host "按回车键返回主菜单..."; return }
     $pluginNames = $availablePlugins | ForEach-Object { $_.Name }
     $selectedNames = Show-InteractiveMenu -Items $pluginNames -Title "请选择要安装的插件" -ConfirmKeyChar 'i' -ConfirmKeyName "安装"
-
     Clear-Host
-    if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) {
-        Write-Host "未选择任何插件或操作已取消。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-
+    if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) { Write-Host "未选择任何插件或操作已取消。"; Read-Host "按回车键返回主菜单..."; return }
     $pluginsToInstall = $availablePlugins | Where-Object { $selectedNames -contains $_.Name }
-    foreach ($plugin in $pluginsToInstall) {
-        Invoke-PluginInstallation -PluginObject $plugin
-    }
-
-    Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan
-    Read-Host "按回车键返回主菜单..."
+    foreach ($plugin in $pluginsToInstall) { Invoke-PluginInstallation -PluginObject $plugin }
+    Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan; Read-Host "按回车键返回主菜单..."
 }
 
 function Uninstall-L4D2Plugin {
-     if (-not $IsSourceModInstalled) {
-        Write-Host "`n错误: SourceMod尚未安装，无法管理插件。" -ForegroundColor Red
-        Read-Host "请先安装SourceMod。按回车键返回..."
-        return
-    }
+    if (-not $IsSourceModInstalled) { Write-Host "`n错误: SourceMod尚未安装，无法管理插件。" -ForegroundColor Red; Read-Host "请先安装SourceMod。按回车键返回..."; return }
     $installedPlugins = @(Get-ChildItem -Path $ReceiptsDir -Filter "*.receipt")
-    if ($installedPlugins.Count -eq 0) {
-        Clear-Host
-        Write-Host "当前没有任何已安装的插件。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-
+    if ($installedPlugins.Count -eq 0) { Clear-Host; Write-Host "当前没有任何已安装的插件。"; Read-Host "按回车键返回主菜单..."; return }
     $pluginNames = $installedPlugins | ForEach-Object { $_.BaseName }
     $selectedNames = Show-InteractiveMenu -Items $pluginNames -Title "请选择要移除的插件" -ConfirmKeyChar 'r' -ConfirmKeyName "移除"
-
     Clear-Host
-    if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) {
-        Write-Host "未选择任何插件或操作已取消。"
-        Read-Host "按回车键返回主菜单..."
-        return
-    }
-    
+    if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) { Write-Host "未选择任何插件或操作已取消。"; Read-Host "按回车键返回主菜单..."; return }
     $receiptsToProcess = $installedPlugins | Where-Object { $selectedNames -contains $_.BaseName }
-    foreach ($receipt in $receiptsToProcess) {
-        Invoke-PluginUninstallation -ReceiptObject $receipt
-    }
-
-    Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan
-    Read-Host "按回车键返回主菜单..."
+    foreach ($receipt in $receiptsToProcess) { Invoke-PluginUninstallation -ReceiptObject $receipt }
+    Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan; Read-Host "按回车键返回主菜单..."
 }
 #endregion
 
@@ -567,31 +625,16 @@ function Uninstall-L4D2Plugin {
 #region 主菜单
 function Show-Menu {
     Clear-Host
-    $ServerStatus = if (Test-Path -Path (Join-Path $ServerRoot "srcds.exe")) { 
-        Write-Host " 服务器状态: 已部署" -ForegroundColor Green
-    } else {
-        Write-Host " 服务器状态: 未部署" -ForegroundColor Yellow
-    }
-    if (Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")) {
-        $script:IsSourceModInstalled = $true
-    } else {
-        $script:IsSourceModInstalled = $false
-    }
-    
+    $ServerStatusDisplay = if (Test-Path (Join-Path $ServerRoot "srcds.exe")) { Write-Host " 服务器状态: 已部署" -ForegroundColor Green } else { Write-Host " 服务器状态: 未部署" -ForegroundColor Yellow }
+    if (Test-Path (Join-Path $L4d2Dir "addons\sourcemod\bin\sourcemod_mm.dll")) { $script:IsSourceModInstalled = $true } else { $script:IsSourceModInstalled = $false }
     Write-Host "========================================================"
-    Write-Host "    L4D2 服务器与插件管理器 $ScriptVersion"
+    Write-Host "   L4D2 服务器与插件管理器 $ScriptVersion"
     Write-Host "========================================================"
     Write-Host ""
-    Write-Host " 服务器根目录: $ServerRootBase"
-    $ServerStatus
-    if ($IsSourceModInstalled) {
-        Write-Host " SourceMod 状态: 已安装" -ForegroundColor Green
-    } else {
-        Write-Host " SourceMod 状态: 未找到!" -ForegroundColor Yellow
-    }
-    if ($RunningProcesses.Count -gt 0) {
-        Write-Host " 运行中实例数: $($RunningProcesses.Count)" -ForegroundColor Cyan
-    }
+    Write-Host " 服务器安装目录: $ServerRoot"
+    $ServerStatusDisplay
+    if ($IsSourceModInstalled) { Write-Host " SourceMod 状态: 已安装" -ForegroundColor Green } else { Write-Host " SourceMod 状态: 未找到!" -ForegroundColor Yellow }
+    if ($RunningProcesses.Count -gt 0) { Write-Host " 运行中实例数: $($RunningProcesses.Count)" -ForegroundColor Cyan }
     Write-Host "`n ================ 服务器管理 ================"
     Write-Host "   1. 部署/更新 L4D2 服务器文件"
     Write-Host "   2. 管理服务器实例 (启动/关闭/定时)"
