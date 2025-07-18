@@ -1,5 +1,5 @@
 ﻿# =================================================================
-# L4D2 服务器与插件管理器 2500
+# L4D2 服务器与插件管理器 2600 - Polaris
 # 作者: Q1en
 # 功能: 部署/更新L4D2服务器, 安装/更新 SourceMod & MetaMod, 并管理插件、服务器实例。
 # =================================================================
@@ -11,8 +11,8 @@
 # #################### 用户配置区 (请务必修改!) ####################
 #
 # 1. 设置您的L4D2服务器安装目录 (此目录将包含 srcds.exe 等文件)
-#    例如: "D:\L4D2_Server"
-$ServerRoot = "D:\L4D2_Server"
+#    例如: "D:\L4D2Server"
+$ServerRoot = "D:\L4D2Server"
 #
 # 2. 设置 SteamCMD.exe 的完整路径。脚本将使用它来下载和更新服务器。
 #    如果文件不存在，脚本会尝试自动下载。
@@ -24,10 +24,17 @@ $SteamCMDPath = "C:\steamcmd\steamcmd.exe"
 $ServerInstances = @{
     "主服_战役" = @{
         Port = 27015
-        HostName = "[CN] My L4D2 Campaign Server"
+        HostName = "[CN] Pure L4D2 Campaign Server"
         MaxPlayers = 8
         StartMap = "c1m1_hotel"
-        ExtraParams = "+sv_gametypes 'coop,realism,survival'"
+        ExtraParams = "+sv_gametypes 'coop,realism,survival' -tickrate 128"
+    }
+    "主服_战役_2333" = @{
+        Port = 2333
+        HostName = "[Aisa] Pure L4D2 Campaign Server"
+        MaxPlayers = 8
+        StartMap = "c1m1_hotel"
+        ExtraParams = "-tickrate 100 -nomaster -insecure"
     }
     "副服_对抗" = @{
         Port = 27016
@@ -48,7 +55,7 @@ $InstallerDir = Join-Path -Path $ScriptDir -ChildPath "SourceMod_Installers"
 $PluginSourceDir = Join-Path -Path $ScriptDir -ChildPath "Available_Plugins"
 $ReceiptsDir = Join-Path -Path $ScriptDir -ChildPath "Installed_Receipts"
 $RunningProcesses = @{} # 用于存储正在运行的服务器进程信息
-$ScriptVersion = "2500"
+$ScriptVersion = "2600 - Polaris"
 $IsSourceModInstalled = $false
 $ScheduledTaskPrefix = "L4D2Manager" # 定时任务的前缀，用于识别和管理
 
@@ -102,8 +109,8 @@ function Show-InteractiveMenu {
         Write-Host ("-"*65)
         Write-Host "  导航:        ↑ / ↓"
         if (-not $SingleSelection) {
-            Write-Host "  选择/取消:  空格键 (Spacebar)"
-            Write-Host "  全选/反选:  A"
+            Write-Host "  选择/取消:   空格键 (Spacebar)"
+            Write-Host "  全选/反选:   A"
         }
         Write-Host "  确认操作:    $ConfirmKeyName ($($ConfirmKeyChar.ToUpper())) 或 Enter"
         Write-Host "  返回:        Q"
@@ -115,9 +122,15 @@ function Show-InteractiveMenu {
             32 { if (-not $SingleSelection) { if ($selectedIndexes.Contains($currentIndex)) { [void]$selectedIndexes.Remove($currentIndex) } else { $selectedIndexes.Add($currentIndex) } } } # Spacebar
             65 { if (-not $SingleSelection) { if ($selectedIndexes.Count -lt $Items.Count) { $selectedIndexes.Clear(); 0..($Items.Count - 1) | ForEach-Object { $selectedIndexes.Add($_) } } else { $selectedIndexes.Clear() } } } # 'A'
             81 { return $null } # 'Q'
-            13 { if ($SingleSelection) { return $Items[$currentIndex] } else { return $selectedIndexes | ForEach-Object { $Items[$_] } } } # Enter
+            13 { 
+                if ($SingleSelection) { return $Items[$currentIndex] } 
+                else { return @($selectedIndexes | ForEach-Object { $Items[$_] }) }
+            } # Enter
         }
-        if ($key.Character -eq $ConfirmKeyChar.ToLower()) { if ($SingleSelection) { return $Items[$currentIndex] } else { return $selectedIndexes | ForEach-Object { $Items[$_] } } }
+        if ($key.Character -eq $ConfirmKeyChar.ToLower()) { 
+            if ($SingleSelection) { return $Items[$currentIndex] }
+            else { return @($selectedIndexes | ForEach-Object { $Items[$_] }) }
+        }
     }
 }
 
@@ -268,8 +281,7 @@ function Manage-ServerInstances {
         Write-Host "`n请选择操作:"
         Write-Host "  1. 启动一个新的服务器实例"
         Write-Host "  2. 关闭一个正在运行的实例"
-        Write-Host "  3. 管理定时任务 (BETA)"
-        Write-Host "  4. 生成手动任务命令行"
+        Write-Host "  3. 服务器定时任务管理"
         Write-Host "`n  Q. 返回主菜单"
         Write-Host "========================================================"
         
@@ -278,7 +290,6 @@ function Manage-ServerInstances {
             "1" { Start-L4D2ServerInstance }
             "2" { Stop-L4D2ServerInstance }
             "3" { Manage-ScheduledTasks }
-            "4" { Generate-ManualTaskCommands }
             "q" { return }
         }
     }
@@ -299,7 +310,7 @@ function Start-L4D2ServerInstance {
     }
     $portInUse = $RunningProcesses.Values | Where-Object { $_.Port -eq $config.Port }
     if ($portInUse) { Write-Host "`n错误: 端口 $($config.Port) 已被实例 '$($portInUse.Name)' 占用 (PID: $($portInUse.PID))。" -ForegroundColor Red; Read-Host "按回车键返回..."; return }
-    $launchArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+    $launchArgs = "-console -game left4dead2 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
     Write-Host "`n即将使用以下参数启动服务器:" -ForegroundColor Cyan; Write-Host " $srcdsPath $launchArgs"
     try {
         $process = Start-Process -FilePath $srcdsPath -ArgumentList $launchArgs -PassThru
@@ -326,52 +337,13 @@ function Stop-L4D2ServerInstance {
     }
     Read-Host "按回车键返回..."
 }
-
-function Generate-ManualTaskCommands {
-    Clear-Host
-    Write-Host "==================== 生成手动任务命令行 ====================" -ForegroundColor Yellow
-    Write-Host @"
-
-此功能为您预设的服务器实例，生成独立的启动和停止命令行。
-您可以将这些命令手动复制到 Windows 的【任务计划程序】中。
-如果希望在脚本内直接管理定时任务，请使用主菜单的【管理定时任务】功能。
-
-"@ -ForegroundColor Cyan
-    Write-Host "------------------------------------------------------------`n"
-
-    if ($ServerInstances.Count -eq 0) { Write-Host "您尚未在脚本中预定义任何服务器实例 (`$ServerInstances`)。" -ForegroundColor Yellow; Read-Host "按回车键返回..."; return }
-    
-    $srcdsPath = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
-
-    foreach ($name in $ServerInstances.Keys) {
-        $config = $ServerInstances[$name]
-        $launchArgs = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
-        
-        Write-Host "实例: '$name' (端口: $($config.Port))" -ForegroundColor Yellow
-        
-        Write-Host "  [定时启动 '$name'] 命令:" -ForegroundColor Green
-        Write-Host "    说明: 此命令会启动 '$name' 实例。"
-        Write-Host "    程序/脚本: " -NoNewline; Write-Host "`"$srcdsPath`"" -ForegroundColor Cyan
-        Write-Host "    添加参数: " -NoNewline; Write-Host $launchArgs -ForegroundColor Cyan
-        
-        Write-Host "  [定时关闭 '$name'] 命令 (推荐):" -ForegroundColor Green
-        Write-Host "    说明: 此命令会通过查找使用端口 $($config.Port) 的进程来精确停止 '$name' 实例。"
-        Write-Host "    程序/脚本: " -NoNewline; Write-Host "wmic" -ForegroundColor Cyan
-        Write-Host "    添加参数: " -NoNewline; Write-Host "process where `"commandline like '%-port $($config.Port)%'`" call terminate" -ForegroundColor Cyan
-        Write-Host ""
-    }
-
-    Write-Host "========================================================"
-    Write-Host "提示: 'wmic' 命令更为精确。请在创建任务计划程序时，将“程序/脚本”和“添加参数”分别填入对应栏位。"
-    Read-Host "`n按回车键返回..."
-}
 #endregion
 
 #region 定时任务管理
 function Manage-ScheduledTasks {
     while($true) {
         Clear-Host
-        Write-Host "==================== 定时任务管理 (BETA) ====================" -ForegroundColor Yellow
+        Write-Host "==================== 服务器定时任务管理 ====================" -ForegroundColor Yellow
         Write-Host "`n此功能允许您直接创建、查看和删除服务器的定时任务。"
         Write-Host "状态说明: [任务状态 | 服务状态] - 任务名 | 触发时间" -ForegroundColor Cyan
         Write-Host " - 任务状态: `就绪`表示会自动执行, `已禁用`则不会。"
@@ -384,13 +356,12 @@ function Manage-ScheduledTasks {
         
         if ($existingTasks) {
             foreach($task in $existingTasks) {
-                # 1. 获取任务状态 (就绪/禁用)
-                $taskStateStr = if($task.State -eq "Disabled") { 
-                    Write-Host "[任务: " -NoNewline
-                    Write-Host "已禁用" -ForegroundColor Gray -NoNewline
+                Write-Host "" -NoNewline
+                # 1. 获取任务状态
+                if($task.State -eq "Disabled") { 
+                    Write-Host "[任务: " -NoNewline; Write-Host "已禁用" -ForegroundColor Gray -NoNewline
                 } else {
-                    Write-Host "[任务: " -NoNewline
-                    Write-Host "就绪" -ForegroundColor Green -NoNewline
+                    Write-Host "[任务: " -NoNewline; Write-Host "就绪" -ForegroundColor Green -NoNewline
                 }
                 Write-Host " | " -NoNewline
 
@@ -416,18 +387,16 @@ function Manage-ScheduledTasks {
                 }
                 Write-Host "] " -NoNewline
 
-                # 3. 【修正】通过读取 StartBoundary 属性来可靠地获取时间
+                # 3. 通过读取 StartBoundary 属性来可靠地获取时间
                 $triggerTime = "未知"
                 if ($task.Triggers -and $task.Triggers.Count -gt 0) {
                     try {
-                        # 读取 StartBoundary (例如 "2025-07-09T22:30:00")
                         $startBoundary = $task.Triggers[0].StartBoundary
                         if (-not [string]::IsNullOrEmpty($startBoundary)) {
-                            # 将其转换为DateTime对象并格式化为 HH:mm
                             $triggerTime = ([datetime]::Parse($startBoundary)).ToString("HH:mm")
                         }
                     } catch {
-                        $triggerTime = "错误" # 如果解析失败则显示错误
+                        $triggerTime = "错误"
                     }
                 }
                 
@@ -473,19 +442,51 @@ function New-ServerScheduledTask {
     while($true) {
         $time = Read-Host "`n请输入每天定时${actionType}的时间 (24小时制, 格式 HH:mm, 例如 22:30)"
         try {
-            [datetime]::ParseExact($time, "HH:mm", $null)
+            $triggerDateTime = [datetime]::ParseExact($time, "HH:mm", $null)
+            if ($triggerDateTime -lt (Get-Date)) {
+                $triggerDateTime = $triggerDateTime.AddDays(1)
+            }
+            Write-Host $triggerDateTime.ToString("yyyy年M月d日 HH:mm:ss")
             break
         } catch {
             Write-Host "时间格式错误，请输入有效的 HH:mm 格式。" -ForegroundColor Red
         }
     }
 
-    $taskName = "$($ScheduledTaskPrefix)_${actionType}_${selectedInstanceName}_Port${port}"
-    $taskDescription = "由L4D2管理器创建，用于在每天 $time 定时${actionType}服务器实例 '$selectedInstanceName' (端口: $port)。"
-    
+    $principal = $null
     if ($StartTask) {
-        $program = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
-        $arguments = "-console -game left4dead2 -insecure +sv_lan 0 +ip 0.0.0.0 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+        $response = Read-Host "`n您希望此任务启动时显示一个可见的控制台窗口(前台)吗? (y/n)`n(y=是, n=否, 默认为 n 在后台静默运行)`n重要: 选择'是'创建的任务, 仅在您登录Windows后才会执行!"
+        if ($response -eq 'y') {
+            try {
+                $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+                if ([string]::IsNullOrEmpty($currentUser)) {
+                    throw "无法获取当前Windows用户名。"
+                }
+                $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -ErrorAction Stop
+            } catch {
+                Write-Host "`n错误: 无法创建交互式用户任务: $($_.Exception.Message)" -ForegroundColor Red
+                Write-Host "任务创建已取消。请检查脚本权限或手动在任务计划程序中设置。" -ForegroundColor Red
+                Read-Host "按回车键返回..."
+                return
+            }
+        }
+    }
+    
+    if ($null -eq $principal) {
+        $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -RunLevel Highest
+    }
+
+    $taskName = "$($ScheduledTaskPrefix)_${actionType}_${selectedInstanceName}_Port${port}"
+    $taskDescription = "由L4D2管理器创建，用于在每天 $($triggerDateTime.ToString('HH:mm')) 定时${actionType}服务器实例 '$selectedInstanceName' (端口: $port)。"
+    
+    $program = ""
+    $arguments = ""
+
+    if ($StartTask) {
+        $program = "cmd.exe"
+        $srcdsFullPath = Join-Path -Path $ServerRoot -ChildPath "srcds.exe"
+        $srcdsArgs = "-console -game left4dead2 -port $($config.Port) +maxplayers $($config.MaxPlayers) +map $($config.StartMap) +hostname `"$($config.HostName)`" $($config.ExtraParams)"
+        $arguments = "/C START `"$selectedInstanceName`" `"$srcdsFullPath`" $srcdsArgs"
         $action = New-ScheduledTaskAction -Execute $program -Argument $arguments -WorkingDirectory $ServerRoot
     } else { # StopTask
         $program = "wmic.exe"
@@ -493,15 +494,16 @@ function New-ServerScheduledTask {
         $action = New-ScheduledTaskAction -Execute $program -Argument $arguments
     }
 
-    $trigger = New-ScheduledTaskTrigger -Daily -At $time
+    $trigger = New-ScheduledTaskTrigger -Daily -At $triggerDateTime
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable
     
     Write-Host "`n--- 任务详情预览 ---" -ForegroundColor Cyan
     Write-Host "任务名称: $taskName"
     Write-Host "任务描述: $taskDescription"
+    Write-Host "执行用户: $($principal.UserId)" -ForegroundColor Yellow
     Write-Host "执行程序: $program"
     Write-Host "程序参数: $arguments"
-    Write-Host "触发时间: 每天 $time"
+    Write-Host "触发时间: 每天 $($triggerDateTime.ToString('HH:mm'))"
     Write-Host "----------------------"
     
     if ((Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) {
@@ -511,11 +513,10 @@ function New-ServerScheduledTask {
     }
 
     try {
-        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Description $taskDescription -Settings $settings -User "NT AUTHORITY\SYSTEM" -RunLevel Highest -Force -ErrorAction Stop
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Description $taskDescription -Settings $settings -Force -ErrorAction Stop
         Write-Host "`n成功创建/更新了定时任务 '$taskName'!" -ForegroundColor Green
     } catch {
         Write-Host "`n创建定时任务失败: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host "请确保您是以【管理员身份】运行此脚本。"
     }
     Read-Host "按回车键返回..."
 }
@@ -549,7 +550,7 @@ function View-DeleteScheduledTasks {
 
         Clear-Host
         Write-Host "--- 开始删除任务 ---"
-        foreach ($item in $selectedToDelete) {
+        foreach ($item in @($selectedToDelete)) {
             $taskNameToDelete = ($item -split ' \| ')[0]
             Write-Host "正在删除任务: '$taskNameToDelete'..."
             try {
@@ -601,7 +602,8 @@ function Install-L4D2Plugin {
     $selectedNames = Show-InteractiveMenu -Items $pluginNames -Title "请选择要安装的插件" -ConfirmKeyChar 'i' -ConfirmKeyName "安装"
     Clear-Host
     if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) { Write-Host "未选择任何插件或操作已取消。"; Read-Host "按回车键返回主菜单..."; return }
-    $pluginsToInstall = $availablePlugins | Where-Object { $selectedNames -contains $_.Name }
+    
+    $pluginsToInstall = $availablePlugins | Where-Object { @($selectedNames) -contains $_.Name }
     foreach ($plugin in $pluginsToInstall) { Invoke-PluginInstallation -PluginObject $plugin }
     Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan; Read-Host "按回车键返回主菜单..."
 }
@@ -614,7 +616,8 @@ function Uninstall-L4D2Plugin {
     $selectedNames = Show-InteractiveMenu -Items $pluginNames -Title "请选择要移除的插件" -ConfirmKeyChar 'r' -ConfirmKeyName "移除"
     Clear-Host
     if ($null -eq $selectedNames -or $selectedNames.Count -eq 0) { Write-Host "未选择任何插件或操作已取消。"; Read-Host "按回车键返回主菜单..."; return }
-    $receiptsToProcess = $installedPlugins | Where-Object { $selectedNames -contains $_.BaseName }
+
+    $receiptsToProcess = $installedPlugins | Where-Object { @($selectedNames) -contains $_.BaseName }
     foreach ($receipt in $receiptsToProcess) { Invoke-PluginUninstallation -ReceiptObject $receipt }
     Write-Host "`n`n所有选定的插件均已处理完毕。" -ForegroundColor Cyan; Read-Host "按回车键返回主菜单..."
 }
